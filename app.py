@@ -39,19 +39,22 @@ if st.button("Submit"):
 
     pnl = 0
 
-    # -------- TRADE PAIRING LOGIC --------
+    # -------- Prevent invalid SELL --------
     if action == "SELL":
         open_trades = df[df["open"] == True]
 
-        if not open_trades.empty:
-            buy_trade = open_trades.iloc[-1]
+        if open_trades.empty:
+            st.error("No open BUY trade to sell")
+            st.stop()
 
-            pnl = (price - buy_trade["price"]) * qty
+        # Pair with last open BUY
+        buy_trade = open_trades.iloc[-1]
+        pnl = (price - buy_trade["price"]) * qty
 
-            # Mark that BUY as closed
-            df.loc[buy_trade.name, "open"] = False
+        # Mark BUY as closed
+        df.loc[buy_trade.name, "open"] = False
 
-    # -------- CREATE TRADE --------
+    # -------- Create Trade --------
     new_trade = {
         "action": action,
         "price": price,
@@ -61,7 +64,7 @@ if st.button("Submit"):
         "open": True if action == "BUY" else False
     }
 
-    # -------- SAVE --------
+    # -------- Save --------
     df = pd.concat([df, pd.DataFrame([new_trade])], ignore_index=True)
     df.to_csv(FILE, index=False)
 
@@ -82,6 +85,25 @@ if st.button("Submit"):
         if recent_pnl < 0:
             warning = "You are in a losing streak — reduce risk"
 
+    # -------- EMOTIONAL DETECTION --------
+
+    # Panic selling (loss after BUY)
+    if len(df) >= 2:
+        last_trade = df.iloc[-1]
+        prev_trade = df.iloc[-2]
+
+        if prev_trade["action"] == "BUY" and last_trade["action"] == "SELL":
+            if last_trade["pnl"] < 0:
+                warning = "Panic selling detected"
+
+    # Revenge trading (buy after loss)
+    if len(df) >= 2:
+        last_trade = df.iloc[-1]
+        prev_trade = df.iloc[-2]
+
+        if prev_trade["pnl"] < 0 and last_trade["action"] == "BUY":
+            warning = "Revenge trading detected"
+
     # -------- RISK ENGINE --------
     position_size = "10%"
 
@@ -89,7 +111,7 @@ if st.button("Submit"):
         position_size = "5%"
 
     if warning:
-        position_size = "2%"
+        position_size = "1%"   # stricter for emotional behavior
 
     # -------- OUTPUT --------
     st.subheader("Decision Output")
