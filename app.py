@@ -47,11 +47,9 @@ if st.button("Submit"):
             st.error("No open BUY trade to sell")
             st.stop()
 
-        # Pair with last open BUY
         buy_trade = open_trades.iloc[-1]
         pnl = (price - buy_trade["price"]) * qty
 
-        # Mark BUY as closed
         df.loc[buy_trade.name, "open"] = False
 
     # -------- Create Trade --------
@@ -71,23 +69,20 @@ if st.button("Submit"):
     # -------- BEHAVIOR DETECTION --------
     warning = None
 
-    # Pattern 1: Risky repeated buying
+    # Risky repeated buying
     if len(df) >= 3:
         last_trades = df.tail(3)
-
         if (last_trades["action"] == "BUY").sum() >= 3 and (last_trades["market"] == "HIGH").sum() >= 2:
             warning = "You are repeatedly buying in high-risk conditions"
 
-    # Pattern 2: Losing streak
+    # Losing streak
     if len(df) >= 3:
-        recent_pnl = df.tail(3)["pnl"].sum()
-
-        if recent_pnl < 0:
+        if df.tail(3)["pnl"].sum() < 0:
             warning = "You are in a losing streak — reduce risk"
 
     # -------- EMOTIONAL DETECTION --------
 
-    # Panic selling (loss after BUY)
+    # Panic selling
     if len(df) >= 2:
         last_trade = df.iloc[-1]
         prev_trade = df.iloc[-2]
@@ -96,7 +91,7 @@ if st.button("Submit"):
             if last_trade["pnl"] < 0:
                 warning = "Panic selling detected"
 
-    # Revenge trading (buy after loss)
+    # Revenge trading
     if len(df) >= 2:
         last_trade = df.iloc[-1]
         prev_trade = df.iloc[-2]
@@ -111,12 +106,28 @@ if st.button("Submit"):
         position_size = "5%"
 
     if warning:
-        position_size = "1%"   # stricter for emotional behavior
+        position_size = "1%"
+
+    # -------- CONFIDENCE SYSTEM --------
+    confidence = 70
+
+    if market == "HIGH":
+        confidence -= 15
+
+    if warning:
+        confidence -= 30
+
+    if len(df) >= 3:
+        if df.tail(3)["pnl"].sum() < 0:
+            confidence -= 20
+
+    confidence = max(10, min(confidence, 95))
 
     # -------- OUTPUT --------
     st.subheader("Decision Output")
     st.write(f"ACTION: {action}")
     st.write(f"POSITION SIZE: {position_size}")
+    st.write(f"CONFIDENCE: {confidence}%")
 
     if warning:
         st.warning(warning)
@@ -124,7 +135,7 @@ if st.button("Submit"):
         st.success("No risky behavior detected")
 
 # -----------------------------
-# SHOW TRADE HISTORY
+# Trade History
 # -----------------------------
 st.subheader("Trade History")
 st.dataframe(df)
