@@ -12,7 +12,7 @@ FILE = "trades.csv"
 if os.path.exists(FILE):
     df = pd.read_csv(FILE)
 else:
-    df = pd.DataFrame(columns=["action", "price", "qty", "market", "pnl"])
+    df = pd.DataFrame(columns=["action", "price", "qty", "market", "pnl", "open"])
 
 # -----------------------------
 # Input
@@ -24,7 +24,7 @@ qty = st.number_input("Quantity", min_value=1)
 market = st.selectbox("Market Condition", ["LOW", "HIGH"])
 
 # -----------------------------
-# Reset button (important for testing)
+# Reset Data
 # -----------------------------
 if st.button("Reset Data"):
     if os.path.exists(FILE):
@@ -37,46 +37,52 @@ if st.button("Reset Data"):
 # -----------------------------
 if st.button("Submit"):
 
-    # -------- PnL Calculation --------
     pnl = 0
 
-    if len(df) > 0:
-        last_price = df.iloc[-1]["price"]
+    # -------- TRADE PAIRING LOGIC --------
+    if action == "SELL":
+        open_trades = df[df["open"] == True]
 
-        if action == "SELL":
-            pnl = (price - last_price) * qty
+        if not open_trades.empty:
+            buy_trade = open_trades.iloc[-1]
 
-    # -------- Create Trade --------
+            pnl = (price - buy_trade["price"]) * qty
+
+            # Mark that BUY as closed
+            df.loc[buy_trade.name, "open"] = False
+
+    # -------- CREATE TRADE --------
     new_trade = {
         "action": action,
         "price": price,
         "qty": qty,
         "market": market,
-        "pnl": pnl
+        "pnl": pnl,
+        "open": True if action == "BUY" else False
     }
 
-    # -------- Save Trade --------
+    # -------- SAVE --------
     df = pd.concat([df, pd.DataFrame([new_trade])], ignore_index=True)
     df.to_csv(FILE, index=False)
 
-    # -------- Behavior Detection --------
+    # -------- BEHAVIOR DETECTION --------
     warning = None
 
-    # Pattern: repeated risky buying
+    # Pattern 1: Risky repeated buying
     if len(df) >= 3:
         last_trades = df.tail(3)
 
         if (last_trades["action"] == "BUY").sum() >= 3 and (last_trades["market"] == "HIGH").sum() >= 2:
             warning = "You are repeatedly buying in high-risk conditions"
 
-    # Pattern: losing streak
+    # Pattern 2: Losing streak
     if len(df) >= 3:
         recent_pnl = df.tail(3)["pnl"].sum()
 
         if recent_pnl < 0:
             warning = "You are in a losing streak — reduce risk"
 
-    # -------- Risk Engine --------
+    # -------- RISK ENGINE --------
     position_size = "10%"
 
     if market == "HIGH":
@@ -85,7 +91,7 @@ if st.button("Submit"):
     if warning:
         position_size = "2%"
 
-    # -------- Output --------
+    # -------- OUTPUT --------
     st.subheader("Decision Output")
     st.write(f"ACTION: {action}")
     st.write(f"POSITION SIZE: {position_size}")
@@ -96,7 +102,7 @@ if st.button("Submit"):
         st.success("No risky behavior detected")
 
 # -----------------------------
-# Optional: Show trade history
+# SHOW TRADE HISTORY
 # -----------------------------
 st.subheader("Trade History")
 st.dataframe(df)
