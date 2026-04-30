@@ -5,6 +5,11 @@ import os
 st.title("Financial Decision MVP")
 
 # -----------------------------
+# USER CAPITAL INPUT
+# -----------------------------
+capital = st.number_input("Enter Your Capital (₹)", min_value=100.0, value=10000.0)
+
+# -----------------------------
 # File setup
 # -----------------------------
 FILE = "trades.csv"
@@ -69,20 +74,17 @@ if st.button("Submit"):
     # -------- BEHAVIOR DETECTION --------
     warning = None
 
-    # Risky repeated buying
     if len(df) >= 3:
         last_trades = df.tail(3)
+
         if (last_trades["action"] == "BUY").sum() >= 3 and (last_trades["market"] == "HIGH").sum() >= 2:
             warning = "You are repeatedly buying in high-risk conditions"
 
-    # Losing streak
     if len(df) >= 3:
         if df.tail(3)["pnl"].sum() < 0:
             warning = "You are in a losing streak — reduce risk"
 
     # -------- EMOTIONAL DETECTION --------
-
-    # Panic selling
     if len(df) >= 2:
         last_trade = df.iloc[-1]
         prev_trade = df.iloc[-2]
@@ -91,22 +93,23 @@ if st.button("Submit"):
             if last_trade["pnl"] < 0:
                 warning = "Panic selling detected"
 
-    # Revenge trading
-    if len(df) >= 2:
-        last_trade = df.iloc[-1]
-        prev_trade = df.iloc[-2]
-
         if prev_trade["pnl"] < 0 and last_trade["action"] == "BUY":
             warning = "Revenge trading detected"
 
     # -------- RISK ENGINE --------
-    position_size = "10%"
+    position_size_pct = 10
 
     if market == "HIGH":
-        position_size = "5%"
+        position_size_pct = 5
 
     if warning:
-        position_size = "1%"
+        position_size_pct = 1
+
+    # -------- CAPITAL CALCULATION --------
+    position_amount = capital * (position_size_pct / 100)
+
+    total_pnl = df["pnl"].sum()
+    current_capital = capital + total_pnl
 
     # -------- CONFIDENCE SYSTEM --------
     confidence = 70
@@ -126,7 +129,8 @@ if st.button("Submit"):
     # -------- OUTPUT --------
     st.subheader("Decision Output")
     st.write(f"ACTION: {action}")
-    st.write(f"POSITION SIZE: {position_size}")
+    st.write(f"POSITION SIZE: {position_size_pct}% (₹{round(position_amount,2)})")
+    st.write(f"CURRENT CAPITAL: ₹{round(current_capital,2)}")
     st.write(f"CONFIDENCE: {confidence}%")
 
     if warning:
