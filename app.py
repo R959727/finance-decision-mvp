@@ -16,6 +16,11 @@ FILE = "trades.csv"
 
 if os.path.exists(FILE):
     df = pd.read_csv(FILE)
+
+    required_cols = ["stock","action","price","qty","market","pnl","open"]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = None
 else:
     df = pd.DataFrame(columns=["stock","action","price","qty","market","pnl","open"])
 
@@ -42,15 +47,18 @@ if st.button("Reset Data"):
 # -----------------------------
 open_positions = df[df["open"] == True]
 
-# Total exposure
+# total exposure
 total_exposure = (open_positions["price"] * open_positions["qty"]).sum()
 
-# Per stock exposure
-stock_exposure = open_positions.groupby("stock").apply(
-    lambda x: (x["price"] * x["qty"]).sum()
-).reset_index(name="exposure")
+# stock-wise exposure
+if not open_positions.empty:
+    stock_exposure = open_positions.groupby("stock").apply(
+        lambda x: (x["price"] * x["qty"]).sum()
+    ).reset_index(name="exposure")
+else:
+    stock_exposure = pd.DataFrame(columns=["stock","exposure"])
 
-# Capital
+# capital
 total_pnl = df["pnl"].sum() if "pnl" in df.columns else 0
 current_capital = capital + total_pnl
 available_capital = current_capital - total_exposure
@@ -62,7 +70,7 @@ if st.button("Submit"):
 
     pnl = 0
 
-    # -------- Prevent invalid SELL --------
+    # -------- SELL LOGIC --------
     if action == "SELL":
         open_trades = df[(df["open"] == True) & (df["stock"] == stock)]
 
@@ -75,14 +83,32 @@ if st.button("Submit"):
 
         df.loc[buy_trade.name, "open"] = False
 
-    # -------- Prevent over-exposure --------
+    # -------- BUY VALIDATION --------
     if action == "BUY":
+
         required_amount = price * qty
+
+        # Capital check
         if required_amount > available_capital:
             st.error("Not enough capital")
             st.stop()
 
-    # -------- Create Trade --------
+        # 🔥 Concentration Risk Check
+        current_stock_exp = 0
+
+        if stock in stock_exposure["stock"].values:
+            current_stock_exp = stock_exposure[
+                stock_exposure["stock"] == stock
+            ]["exposure"].values[0]
+
+        new_stock_exp = current_stock_exp + required_amount
+        max_allowed = current_capital * 0.3   # 30% limit
+
+        if new_stock_exp > max_allowed:
+            st.error("Too much exposure in this stock (limit 30%)")
+            st.stop()
+
+    # -------- SAVE TRADE --------
     new_trade = {
         "stock": stock,
         "action": action,
@@ -96,7 +122,7 @@ if st.button("Submit"):
     df = pd.concat([df, pd.DataFrame([new_trade])], ignore_index=True)
     df.to_csv(FILE, index=False)
 
-    # -------- BEHAVIOR DETECTION --------
+    # -------- BEHAVIOR --------
     warning = None
 
     if len(df) >= 3:
