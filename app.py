@@ -1,89 +1,74 @@
 import streamlit as st
 import pandas as pd
-import os
+
+st.set_page_config(page_title="Financial Decision MVP", layout="wide")
 
 st.title("Financial Decision MVP")
 
 # -----------------------------
-# CAPITAL INPUT
+# SESSION STATE
 # -----------------------------
-capital = st.number_input("Enter Your Capital (₹)", min_value=100.0, value=10000.0)
+if "trades" not in st.session_state:
+    st.session_state.trades = []
 
-FILE = "trades.csv"
-required_cols = ["stock","action","price","qty","market","pnl","open"]
+if "capital" not in st.session_state:
+    st.session_state.capital = 10000.0
 
-# -----------------------------
-# LOAD DATA
-# -----------------------------
-if os.path.exists(FILE):
-    df = pd.read_csv(FILE)
-    for col in required_cols:
-        if col not in df.columns:
-            df[col] = None
-else:
-    df = pd.DataFrame(columns=required_cols)
 
 # -----------------------------
-# INPUT
+# INPUTS
 # -----------------------------
-stock = st.text_input("Stock Name")
+capital = st.number_input("Enter Your Capital (₹)", value=st.session_state.capital)
+
+stock = st.text_input("Stock Name", value="tata")
 action = st.selectbox("Action", ["BUY", "SELL"])
-price = st.number_input("Price", min_value=0.0)
-qty = st.number_input("Quantity", min_value=1)
+price = st.number_input("Price", min_value=0.0, value=100.0)
+qty = st.number_input("Quantity", min_value=1, value=1)
 market = st.selectbox("Market Condition", ["LOW", "HIGH"])
 
 # -----------------------------
 # RESET
 # -----------------------------
 if st.button("Reset Data"):
-    if os.path.exists(FILE):
-        os.remove(FILE)
-    st.success("Reset done. Refresh.")
-    st.stop()
+    st.session_state.trades = []
+    st.session_state.capital = 10000.0
+    st.success("Data reset")
 
 # -----------------------------
-# PORTFOLIO CALCULATION
+# DATAFRAME
 # -----------------------------
-open_positions = df[df["open"] == True]
+df = pd.DataFrame(st.session_state.trades)
 
-if not open_positions.empty:
-    open_positions = open_positions.copy()
+if not df.empty:
+    open_positions = df[df["open"] == True].copy()
     open_positions["value"] = open_positions["price"] * open_positions["qty"]
-    total_exposure = open_positions["value"].sum()
+else:
+    open_positions = pd.DataFrame()
 
-    stock_exposure = open_positions.groupby("stock")["value"].sum().reset_index()
-    stock_exposure.rename(columns={"value": "exposure"}, inplace=True)
+# -----------------------------
+# CAPITAL CALCULATION
+# -----------------------------
+if not open_positions.empty:
+    total_exposure = open_positions["value"].sum()
 else:
     total_exposure = 0
-    stock_exposure = pd.DataFrame(columns=["stock","exposure"])
 
-total_pnl = df["pnl"].fillna(0).sum()
-current_capital = capital + total_pnl
-available_capital = current_capital - total_exposure
+available_capital = capital - total_exposure
 
 # -----------------------------
-# INPUT VALIDATION (NON-BLOCKING)
+# VALIDATION
 # -----------------------------
 invalid_input = False
-
-if not stock or stock.strip() == "":
-    st.error("Stock required")
-    invalid_input = True
 
 if price <= 0:
     st.error("Price must be > 0")
     invalid_input = True
 
-if qty <= 0:
-    st.error("Quantity must be >= 1")
-    invalid_input = True
+# -----------------------------
+# DECISION ENGINE (RUN ONCE)
+# -----------------------------
+execute_trade = False
 
-# -----------------------------
-# DECISION ENGINE (ONLY IF VALID)
-# -----------------------------
-# -----------------------------
-# SMART DECISION ENGINE v1.6
-# -----------------------------
 if not invalid_input:
 
     score = 60
@@ -91,15 +76,13 @@ if not invalid_input:
 
     trade_value = price * qty
 
-    # -----------------------------
-    # MARKET CONTEXT
-    # -----------------------------
+    # MARKET LOGIC
     if market == "HIGH":
         if action == "BUY":
             score -= 15
             reasons.append("Buying in high volatility")
         else:
-            score += 10  # selling into volatility is good
+            score += 10
 
     if market == "LOW":
         if action == "BUY":
@@ -108,10 +91,8 @@ if not invalid_input:
             score -= 10
             reasons.append("Selling in low momentum")
 
-    # -----------------------------
-    # TRADE SIZE CONTROL
-    # -----------------------------
-    if trade_value > current_capital * 0.2:
+    # SIZE CONTROL
+    if trade_value > capital * 0.2:
         score -= 20
         reasons.append("Position too large")
 
@@ -119,52 +100,16 @@ if not invalid_input:
         score -= 40
         reasons.append("Insufficient capital")
 
-    # -----------------------------
-    # STOCK-SPECIFIC BEHAVIOR
-    # -----------------------------
-    current_stock_exp = 0
-    if not stock_exposure.empty and stock in stock_exposure["stock"].values:
-        current_stock_exp = stock_exposure[
-            stock_exposure["stock"] == stock
-        ]["exposure"].values[0]
+    # LOSS STREAK
+    if not df.empty:
+        last_3 = df.tail(3)["pnl"].fillna(0)
+        if (last_3 < 0).sum() >= 2:
+            score -= 20
+            reasons.append("Losing streak")
 
-    if current_stock_exp > current_capital * 0.3:
-        score -= 15
-        reasons.append("Overexposed stock")
-
-    # -----------------------------
-    # PERFORMANCE MEMORY (VERY IMPORTANT)
-    # -----------------------------
-    stock_trades = df[df["stock"] == stock]
-
-    if not stock_trades.empty:
-        pnl_sum = stock_trades["pnl"].fillna(0).sum()
-
-        if pnl_sum > 0:
-            score += 10  # you're good at this stock
-        else:
-            score -= 10
-            reasons.append("Weak performance in this stock")
-
-    # -----------------------------
-    # LOSS STREAK DETECTION
-    # -----------------------------
-    last_3 = df.tail(3)["pnl"].fillna(0)
-
-    if (last_3 < 0).sum() >= 2:
-        score -= 20
-        reasons.append("Losing streak")
-
-    # -----------------------------
-    # FINAL SCORE NORMALIZATION
-    # -----------------------------
     score = max(0, min(score, 100))
+    confidence = int(score * 0.8)
 
-    confidence = int(score * 0.8)  # more realistic scaling
-
-    # -----------------------------
-    # RECOMMENDATION
-    # -----------------------------
     if score >= 70:
         rec = "STRONG TRADE"
     elif score >= 50:
@@ -173,7 +118,7 @@ if not invalid_input:
         rec = "AVOID"
 
     # -----------------------------
-    # DISPLAY
+    # DISPLAY ANALYSIS
     # -----------------------------
     st.subheader("Pre-Trade Analysis")
     st.write(f"Score: {score}/100")
@@ -185,147 +130,60 @@ if not invalid_input:
     else:
         st.success("High quality setup")
 
-    # volatility
-    if market == "HIGH":
-        score -= 25
-        reasons.append("High volatility")
+    # -----------------------------
+    # EXECUTION CONTROL
+    # -----------------------------
+    if rec == "STRONG TRADE":
+        if st.button("Execute Trade"):
+            execute_trade = True
 
-    # size
-    if trade_value > current_capital * 0.2:
-        score -= 20
-        reasons.append("Too large position")
+    elif rec == "CAUTION":
+        confirm = st.checkbox("I understand the risk")
+        if confirm and st.button("Execute Anyway"):
+            execute_trade = True
 
-    # capital pressure
-    if trade_value > available_capital:
-        score -= 30
-        reasons.append("Not enough capital")
-
-    # concentration
-    current_stock_exp = 0
-    if not stock_exposure.empty and stock in stock_exposure["stock"].values:
-        current_stock_exp = stock_exposure[
-            stock_exposure["stock"] == stock
-        ]["exposure"].values[0]
-
-    if current_stock_exp > current_capital * 0.3:
-        score -= 20
-        reasons.append("Overexposed stock")
-
-    # recent losses
-    recent_losses = df.tail(3)["pnl"].fillna(0).sum()
-    if recent_losses < 0:
-        score -= 20
-        reasons.append("Recent losses")
-
-    score = max(0, min(score, 100))
-
-    # recommendation
-    if score >= 70:
-        rec = "TAKE TRADE"
-    elif score >= 50:
-        rec = "CAUTION"
     else:
-        rec = "AVOID"
-
-    # display
-    st.subheader("Pre-Trade Analysis")
-    st.write(f"Score: {score}/100")
-    st.write(f"Recommendation: {rec}")
-
-    if reasons:
-        st.warning(", ".join(reasons))
-    else:
-        st.success("Strong setup")
+        st.error("Trade blocked — too risky")
 
 # -----------------------------
-# EXECUTION FUNCTION
+# EXECUTION
 # -----------------------------
-def execute_trade(exec_qty):
-    global df
+if execute_trade:
 
-    if not stock or stock.strip() == "":
-        st.error("Stock required")
-        return
-
-    if price <= 0:
-        st.error("Price must be > 0")
-        return
-
-    if exec_qty <= 0:
-        st.error("Qty must be >= 1")
-        return
-
-    pnl = 0
-
-    # SELL
-    if action == "SELL":
-        open_trades = df[(df["open"] == True) & (df["stock"] == stock)]
-
-        if open_trades.empty:
-            st.error("No BUY to sell")
-            return
-
-        buy_trade = open_trades.iloc[-1]
-        pnl = (price - buy_trade["price"]) * exec_qty
-        df.loc[buy_trade.name, "open"] = False
-
-    # BUY
-    if action == "BUY":
-        required = price * exec_qty
-
-        if required > available_capital:
-            st.error("Not enough capital")
-            return
-
-    # SAVE
     new_trade = {
-        "stock": stock.strip(),
+        "stock": stock,
         "action": action,
         "price": price,
-        "qty": exec_qty,
+        "qty": qty,
         "market": market,
-        "pnl": pnl,
-        "open": True if action == "BUY" else False
+        "pnl": 0,
+        "open": True
     }
 
-    df = pd.concat([df, pd.DataFrame([new_trade])], ignore_index=True)
-    df.to_csv(FILE, index=False)
-
+    st.session_state.trades.append(new_trade)
     st.success("Trade executed")
 
 # -----------------------------
-# EXECUTION CONTROL
-# -----------------------------
-if not invalid_input:
-
-    if score >= 70:
-        if st.button("Execute Trade"):
-            execute_trade(qty)
-
-    elif 50 <= score < 70:
-        st.warning("Medium risk → size reduced")
-
-        confirm = st.checkbox("Proceed anyway")
-
-        if confirm and st.button("Execute Limited Trade"):
-            reduced_qty = max(1, int(qty * 0.5))
-            execute_trade(reduced_qty)
-
-    else:
-        st.error("Blocked: bad trade")
-
-# -----------------------------
-# PORTFOLIO VIEW (ALWAYS VISIBLE)
+# PORTFOLIO OVERVIEW
 # -----------------------------
 st.subheader("Portfolio Overview")
-st.write(f"Total Exposure: ₹{round(total_exposure,2)}")
-st.write(f"Available Capital: ₹{round(available_capital,2)}")
+st.write(f"Total Exposure: ₹{total_exposure}")
+st.write(f"Available Capital: ₹{available_capital}")
 
-st.subheader("Stock-wise Exposure")
-st.dataframe(stock_exposure)
-
+# -----------------------------
+# OPEN POSITIONS
+# -----------------------------
 st.subheader("Open Positions")
-st.dataframe(open_positions)
+if not open_positions.empty:
+    st.dataframe(open_positions)
+else:
+    st.write("No open positions")
 
+# -----------------------------
+# TRADE HISTORY
+# -----------------------------
 st.subheader("Trade History")
-st.dataframe(df)
+if not df.empty:
+    st.dataframe(df)
+else:
+    st.write("No trades yet")
