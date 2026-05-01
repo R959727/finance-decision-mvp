@@ -13,7 +13,7 @@ FILE = "trades.csv"
 required_cols = ["stock","action","price","qty","market","pnl","open"]
 
 # -----------------------------
-# LOAD DATA
+# LOAD DATA (ROBUST)
 # -----------------------------
 if os.path.exists(FILE):
     df = pd.read_csv(FILE)
@@ -114,13 +114,27 @@ else:
     st.success("Good conditions")
 
 # -----------------------------
-# TRADE EXECUTION FUNCTION
+# EXECUTION FUNCTION (VALIDATED)
 # -----------------------------
 def execute_trade():
     global df
 
+    # -------- INPUT VALIDATION --------
+    if not stock or stock.strip() == "":
+        st.error("Stock name cannot be empty")
+        return
+
+    if price <= 0:
+        st.error("Price must be greater than 0")
+        return
+
+    if qty <= 0:
+        st.error("Quantity must be at least 1")
+        return
+
     pnl = 0
 
+    # -------- SELL --------
     if action == "SELL":
         open_trades = df[(df["open"] == True) & (df["stock"] == stock)]
 
@@ -132,6 +146,7 @@ def execute_trade():
         pnl = (price - buy_trade["price"]) * qty
         df.loc[buy_trade.name, "open"] = False
 
+    # -------- BUY --------
     if action == "BUY":
         required_amount = price * qty
 
@@ -144,8 +159,9 @@ def execute_trade():
             st.error("Too much exposure in this stock")
             return
 
+    # -------- SAVE --------
     new_trade = {
-        "stock": stock,
+        "stock": stock.strip(),
         "action": action,
         "price": price,
         "qty": qty,
