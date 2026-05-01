@@ -8,8 +8,11 @@ st.title("Financial Decision MVP")
 # -----------------------------
 # SESSION STATE
 # -----------------------------
-if "trades" not in st.session_state:
-    st.session_state.trades = []
+if "positions" not in st.session_state:
+    st.session_state.positions = {}
+
+if "history" not in st.session_state:
+    st.session_state.history = []
 
 if "capital" not in st.session_state:
     st.session_state.capital = 10000.0
@@ -17,113 +20,72 @@ if "capital" not in st.session_state:
 # -----------------------------
 # INPUTS
 # -----------------------------
-capital = st.number_input("Enter Your Capital (₹)", value=st.session_state.capital)
+capital = st.number_input("Capital (₹)", value=st.session_state.capital)
 
-stock = st.text_input("Stock Name", value="tata")
+stock = st.text_input("Stock", "tata")
 action = st.selectbox("Action", ["BUY", "SELL"])
-price = st.number_input("Price", min_value=0.0, value=100.0)
+price = st.number_input("Entry Price", min_value=0.0, value=100.0)
 qty = st.number_input("Quantity", min_value=1, value=1)
-market = st.selectbox("Market Condition", ["LOW", "HIGH"])
+market = st.selectbox("Market", ["LOW", "HIGH"])
+
+# Live price (IMPORTANT)
+current_price = st.number_input("Current Market Price", min_value=0.0, value=price)
 
 # -----------------------------
 # RESET
 # -----------------------------
-if st.button("Reset Data"):
-    st.session_state.trades = []
+if st.button("Reset"):
+    st.session_state.positions = {}
+    st.session_state.history = []
     st.session_state.capital = 10000.0
-    st.success("Data reset")
+    st.success("Reset done")
 
 # -----------------------------
-# DATAFRAME
+# POSITION DATA
 # -----------------------------
-df = pd.DataFrame(st.session_state.trades)
+positions = st.session_state.positions
 
-if not df.empty:
-    open_positions = df[df["open"] == True].copy()
-    open_positions["value"] = open_positions["price"] * open_positions["qty"]
-else:
-    open_positions = pd.DataFrame()
-
-# -----------------------------
-# CAPITAL CALCULATION
-# -----------------------------
-if not open_positions.empty:
-    total_exposure = open_positions["value"].sum()
-else:
-    total_exposure = 0
+total_exposure = sum(
+    p["avg_price"] * p["qty"] for p in positions.values()
+)
 
 available_capital = capital - total_exposure
 
 # -----------------------------
-# STOCK EXPOSURE
-# -----------------------------
-if not open_positions.empty:
-    stock_exposure = open_positions.groupby("stock")["value"].sum().reset_index()
-else:
-    stock_exposure = pd.DataFrame(columns=["stock", "value"])
-
-current_stock_exp = 0
-if stock in stock_exposure["stock"].values:
-    current_stock_exp = stock_exposure[
-        stock_exposure["stock"] == stock
-    ]["value"].values[0]
-
-# -----------------------------
 # VALIDATION
 # -----------------------------
-invalid_input = False
-
+invalid = False
 if price <= 0:
     st.error("Price must be > 0")
-    invalid_input = True
+    invalid = True
 
 # -----------------------------
 # DECISION ENGINE
 # -----------------------------
-execute_trade = False
+execute = False
 
-if not invalid_input:
+if not invalid:
 
     score = 60
     reasons = []
-
     trade_value = price * qty
 
-    # MARKET LOGIC
-    if market == "HIGH":
-        if action == "BUY":
-            score -= 15
-            reasons.append("Buying in high volatility")
-        else:
-            score += 10
+    if market == "HIGH" and action == "BUY":
+        score -= 15
+        reasons.append("High volatility")
 
-    if market == "LOW":
-        if action == "BUY":
-            score += 10
-        else:
-            score -= 10
-            reasons.append("Selling in low momentum")
-
-    # SIZE CONTROL
     if trade_value > capital * 0.2:
         score -= 20
-        reasons.append("Position too large")
+        reasons.append("Too large position")
 
     if trade_value > available_capital:
         score -= 40
-        reasons.append("Insufficient capital")
+        reasons.append("Not enough capital")
 
-    # STOCK CONCENTRATION
-    if current_stock_exp + trade_value > capital * 0.3:
-        score -= 25
-        reasons.append("Too much exposure in one stock")
-
-    # LOSS STREAK
-    if not df.empty:
-        last_3 = df.tail(3)["pnl"].fillna(0)
-        if (last_3 < 0).sum() >= 2:
-            score -= 20
-            reasons.append("Losing streak")
+    if stock in positions:
+        if (positions[stock]["avg_price"] * positions[stock]["qty"] + trade_value) > capital * 0.3:
+            score -= 25
+            reasons.append("Overexposed stock")
 
     score = max(0, min(score, 100))
     confidence = int(score * 0.8)
@@ -136,7 +98,7 @@ if not invalid_input:
         rec = "AVOID"
 
     # -----------------------------
-    # DISPLAY ANALYSIS
+    # DISPLAY
     # -----------------------------
     st.subheader("Pre-Trade Analysis")
     st.write(f"Score: {score}/100")
@@ -148,96 +110,106 @@ if not invalid_input:
     else:
         st.success("High quality setup")
 
-    # -----------------------------
-    # EXECUTION CONTROL
-    # -----------------------------
     if rec == "STRONG TRADE":
         if st.button("Execute Trade"):
-            execute_trade = True
+            execute = True
 
     elif rec == "CAUTION":
-        confirm = st.checkbox("I understand the risk")
-        if confirm and st.button("Execute Anyway"):
-            execute_trade = True
+        if st.checkbox("Accept Risk") and st.button("Execute Anyway"):
+            execute = True
 
     else:
-        st.error("Trade blocked — too risky")
+        st.error("Blocked")
 
 # -----------------------------
 # EXECUTE TRADE
 # -----------------------------
-if execute_trade:
+if execute:
 
-    new_trade = {
+    if action == "BUY":
+        if stock in positions:
+            old_qty = positions[stock]["qty"]
+            old_price = positions[stock]["avg_price"]
+
+            new_qty = old_qty + qty
+            new_price = ((old_price * old_qty) + (price * qty)) / new_qty
+
+            positions[stock]["qty"] = new_qty
+            positions[stock]["avg_price"] = new_price
+        else:
+            positions[stock] = {
+                "qty": qty,
+                "avg_price": price
+            }
+
+    st.session_state.history.append({
         "stock": stock,
         "action": action,
         "price": price,
-        "qty": qty,
-        "market": market,
-        "pnl": 0,
-        "open": True
-    }
+        "qty": qty
+    })
 
-    st.session_state.trades.append(new_trade)
     st.success("Trade executed")
 
 # -----------------------------
-# PORTFOLIO OVERVIEW
+# PORTFOLIO VIEW
 # -----------------------------
-st.subheader("Portfolio Overview")
-st.write(f"Total Exposure: ₹{total_exposure}")
-st.write(f"Available Capital: ₹{available_capital}")
+st.subheader("Portfolio")
+
+rows = []
+
+for s, p in positions.items():
+    unrealized = (current_price - p["avg_price"]) * p["qty"]
+    rows.append({
+        "stock": s,
+        "qty": p["qty"],
+        "avg_price": p["avg_price"],
+        "current_price": current_price,
+        "unrealized_pnl": unrealized
+    })
+
+portfolio_df = pd.DataFrame(rows)
+
+if not portfolio_df.empty:
+    st.dataframe(portfolio_df)
 
 # -----------------------------
-# OPEN POSITIONS
-# -----------------------------
-st.subheader("Open Positions")
-
-if not open_positions.empty:
-    st.dataframe(open_positions)
-else:
-    st.write("No open positions")
-
-# -----------------------------
-# CLOSE POSITIONS (EXIT SYSTEM)
+# CLOSE POSITIONS
 # -----------------------------
 st.subheader("Close Positions")
 
-if not open_positions.empty:
+for s in list(positions.keys()):
+    if st.button(f"Close {s}"):
 
-    for i, row in open_positions.iterrows():
+        p = positions[s]
+        pnl = (current_price - p["avg_price"]) * p["qty"]
 
-        col1, col2 = st.columns([3, 1])
+        st.session_state.capital += pnl
 
-        with col1:
-            st.write(f"{row['stock']} | Buy @ {row['price']} | Qty: {row['qty']}")
+        st.session_state.history.append({
+            "stock": s,
+            "action": "SELL",
+            "price": current_price,
+            "qty": p["qty"],
+            "pnl": pnl
+        })
 
-        with col2:
-            if st.button(f"Close {i}"):
+        del positions[s]
 
-                sell_price = st.number_input(
-                    f"Sell price for {row['stock']} (index {i})",
-                    min_value=0.0,
-                    value=row["price"],
-                    key=f"sell_{i}"
-                )
-
-                pnl = (sell_price - row["price"]) * row["qty"]
-
-                st.session_state.trades[i]["pnl"] = pnl
-                st.session_state.trades[i]["open"] = False
-
-                # UPDATE CAPITAL
-                st.session_state.capital += pnl
-
-                st.success(f"Closed {row['stock']} | PnL: ₹{pnl}")
+        st.success(f"Closed {s} | PnL: ₹{pnl}")
 
 # -----------------------------
-# TRADE HISTORY
+# SUMMARY
+# -----------------------------
+st.subheader("Summary")
+st.write(f"Capital: ₹{st.session_state.capital}")
+st.write(f"Exposure: ₹{total_exposure}")
+st.write(f"Available: ₹{available_capital}")
+
+# -----------------------------
+# HISTORY
 # -----------------------------
 st.subheader("Trade History")
 
-if not df.empty:
-    st.dataframe(df)
-else:
-    st.write("No trades yet")
+if st.session_state.history:
+    st.dataframe(pd.DataFrame(st.session_state.history))
