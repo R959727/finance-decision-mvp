@@ -17,7 +17,7 @@ FILE = "trades.csv"
 if os.path.exists(FILE):
     df = pd.read_csv(FILE)
 else:
-    df = pd.DataFrame(columns=["action", "price", "qty", "market", "pnl", "open"])
+    df = pd.DataFrame(columns=["stock","action","price","qty","market","pnl","open"])
 
 # -----------------------------
 # Input
@@ -41,8 +41,17 @@ if st.button("Reset Data"):
 # PORTFOLIO CALCULATION
 # -----------------------------
 open_positions = df[df["open"] == True]
+
+# Total exposure
 total_exposure = (open_positions["price"] * open_positions["qty"]).sum()
-total_pnl = df["pnl"].sum()
+
+# Per stock exposure
+stock_exposure = open_positions.groupby("stock").apply(
+    lambda x: (x["price"] * x["qty"]).sum()
+).reset_index(name="exposure")
+
+# Capital
+total_pnl = df["pnl"].sum() if "pnl" in df.columns else 0
 current_capital = capital + total_pnl
 available_capital = current_capital - total_exposure
 
@@ -55,10 +64,10 @@ if st.button("Submit"):
 
     # -------- Prevent invalid SELL --------
     if action == "SELL":
-        open_trades = df[df["open"] == True]
+        open_trades = df[(df["open"] == True) & (df["stock"] == stock)]
 
         if open_trades.empty:
-            st.error("No open BUY trade to sell")
+            st.error("No open BUY for this stock")
             st.stop()
 
         buy_trade = open_trades.iloc[-1]
@@ -70,11 +79,12 @@ if st.button("Submit"):
     if action == "BUY":
         required_amount = price * qty
         if required_amount > available_capital:
-            st.error("Not enough capital available")
+            st.error("Not enough capital")
             st.stop()
 
     # -------- Create Trade --------
     new_trade = {
+        "stock": stock,
         "action": action,
         "price": price,
         "qty": qty,
@@ -83,7 +93,6 @@ if st.button("Submit"):
         "open": True if action == "BUY" else False
     }
 
-    # -------- Save --------
     df = pd.concat([df, pd.DataFrame([new_trade])], ignore_index=True)
     df.to_csv(FILE, index=False)
 
@@ -93,23 +102,11 @@ if st.button("Submit"):
     if len(df) >= 3:
         last_trades = df.tail(3)
 
-        if (last_trades["action"] == "BUY").sum() >= 3 and (last_trades["market"] == "HIGH").sum() >= 2:
-            warning = "You are repeatedly buying in high-risk conditions"
+        if (last_trades["action"] == "BUY").sum() >= 3:
+            warning = "Over-buying behavior detected"
 
         if last_trades["pnl"].sum() < 0:
-            warning = "You are in a losing streak — reduce risk"
-
-    # -------- EMOTIONAL DETECTION --------
-    if len(df) >= 2:
-        last_trade = df.iloc[-1]
-        prev_trade = df.iloc[-2]
-
-        if prev_trade["action"] == "BUY" and last_trade["action"] == "SELL":
-            if last_trade["pnl"] < 0:
-                warning = "Panic selling detected"
-
-        if prev_trade["pnl"] < 0 and last_trade["action"] == "BUY":
-            warning = "Revenge trading detected"
+            warning = "Losing streak detected"
 
     # -------- RISK ENGINE --------
     position_size_pct = 10
@@ -122,7 +119,7 @@ if st.button("Submit"):
 
     position_amount = current_capital * (position_size_pct / 100)
 
-    # -------- CONFIDENCE SYSTEM --------
+    # -------- CONFIDENCE --------
     confidence = 70
 
     if market == "HIGH":
@@ -131,13 +128,11 @@ if st.button("Submit"):
     if warning:
         confidence -= 30
 
-    if len(df) >= 3 and df.tail(3)["pnl"].sum() < 0:
-        confidence -= 20
-
     confidence = max(10, min(confidence, 95))
 
     # -------- OUTPUT --------
     st.subheader("Decision Output")
+    st.write(f"STOCK: {stock}")
     st.write(f"ACTION: {action}")
     st.write(f"POSITION SIZE: {position_size_pct}% (₹{round(position_amount,2)})")
     st.write(f"CURRENT CAPITAL: ₹{round(current_capital,2)}")
@@ -147,7 +142,7 @@ if st.button("Submit"):
     if warning:
         st.warning(warning)
     else:
-        st.success("No risky behavior detected")
+        st.success("No risk detected")
 
 # -----------------------------
 # PORTFOLIO VIEW
@@ -156,6 +151,9 @@ st.subheader("Portfolio Overview")
 
 st.write(f"Total Exposure: ₹{round(total_exposure,2)}")
 st.write(f"Available Capital: ₹{round(available_capital,2)}")
+
+st.subheader("Stock-wise Exposure")
+st.dataframe(stock_exposure)
 
 st.subheader("Open Positions")
 st.dataframe(open_positions)
