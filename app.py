@@ -4,7 +4,7 @@ import time
 
 st.set_page_config(layout="wide")
 
-st.title("Financial Decision MVP - Pro")
+st.title("Financial Decision System - Real Engine")
 
 # ---------------- STATE ----------------
 if "positions" not in st.session_state:
@@ -20,8 +20,6 @@ if "last_trade_time" not in st.session_state:
     st.session_state.last_trade_time = {}
 
 # ---------------- INPUT ----------------
-capital = st.number_input("Capital", value=st.session_state.capital)
-
 stock = st.text_input("Stock", "tata").lower()
 action = st.selectbox("Action", ["BUY", "SELL"])
 price = st.number_input("Price", min_value=0.0, value=100.0)
@@ -30,42 +28,48 @@ market = st.selectbox("Market", ["LOW", "HIGH"])
 current_price = st.number_input("Current Price", min_value=0.0, value=price)
 
 positions = st.session_state.positions
+capital = st.session_state.capital
+
+# ---------------- VALIDATION ----------------
+invalid = False
+
+if price <= 0:
+    st.error("Price must be > 0")
+    invalid = True
+
+if stock == "":
+    st.error("Stock required")
+    invalid = True
+
+# price sanity (prevent nonsense inputs)
+if stock in positions:
+    avg = positions[stock]["avg_price"]
+    if price > avg * 5 or price < avg * 0.2:
+        st.warning("Unrealistic price vs previous trades")
 
 # ---------------- CALCULATIONS ----------------
 total_exposure = sum(p["avg_price"] * p["qty"] for p in positions.values())
-available_capital = capital - total_exposure
 
-stock_exposure = 0
-if stock in positions:
-    stock_exposure = positions[stock]["avg_price"] * positions[stock]["qty"]
-
+stock_exposure = positions[stock]["avg_price"] * positions[stock]["qty"] if stock in positions else 0
 trade_value = price * qty
 
 # ---------------- DECISION ENGINE ----------------
 score = 60
 reasons = []
 
-# Volatility penalty
 if market == "HIGH":
     score -= 10
     reasons.append("High volatility")
 
-# Position size check
-if trade_value > capital * 0.2:
-    score -= 20
-    reasons.append("Too large position")
-
-# Capital check
-if trade_value > available_capital:
+if trade_value > capital:
     score -= 40
-    reasons.append("Insufficient capital")
+    reasons.append("Not enough capital")
 
-# Stock exposure limit (30%)
 if (stock_exposure + trade_value) > capital * 0.3:
-    score -= 30
+    score -= 25
     reasons.append("Overexposed stock")
 
-# Cooldown check (10 seconds demo)
+# cooldown
 now = time.time()
 if stock in st.session_state.last_trade_time:
     if now - st.session_state.last_trade_time[stock] < 10:
@@ -75,9 +79,8 @@ if stock in st.session_state.last_trade_time:
 score = max(0, min(score, 100))
 confidence = int(score * 0.8)
 
-# ---------------- RECOMMENDATION ----------------
 if score >= 70:
-    rec = "STRONG TRADE"
+    rec = "STRONG"
 elif score >= 50:
     rec = "CAUTION"
 else:
@@ -92,52 +95,74 @@ st.write(f"Recommendation: {rec}")
 if reasons:
     st.warning(", ".join(reasons))
 else:
-    st.success("Strong setup")
+    st.success("Good setup")
 
-# ---------------- EXECUTION LOGIC ----------------
+# ---------------- EXECUTION ----------------
 execute = False
 
-if rec == "STRONG TRADE":
-    if st.button("Execute Trade"):
-        execute = True
+if not invalid:
+    if rec == "STRONG":
+        if st.button("Execute"):
+            execute = True
+    elif rec == "CAUTION":
+        if st.checkbox("Accept Risk") and st.button("Force Execute"):
+            execute = True
+    else:
+        st.error("Trade blocked")
 
-elif rec == "CAUTION":
-    st.warning("Manual override required")
-    if st.checkbox("Accept Risk") and st.button("Execute Anyway"):
-        execute = True
-
-else:
-    st.error("Trade blocked — system protection")
-
-# ---------------- EXECUTE ----------------
+# ---------------- APPLY TRADE ----------------
 if execute:
 
-    # BUY
     if action == "BUY":
-        if stock in positions:
-            old_qty = positions[stock]["qty"]
-            old_price = positions[stock]["avg_price"]
 
-            new_qty = old_qty + qty
-            new_price = ((old_price * old_qty) + (price * qty)) / new_qty
-
-            positions[stock]["qty"] = new_qty
-            positions[stock]["avg_price"] = new_price
+        if trade_value > capital:
+            st.error("Not enough capital")
         else:
-            positions[stock] = {"qty": qty, "avg_price": price}
+            # Deduct capital
+            st.session_state.capital -= trade_value
 
-    # Track cooldown
+            if stock in positions:
+                old_qty = positions[stock]["qty"]
+                old_price = positions[stock]["avg_price"]
+
+                new_qty = old_qty + qty
+                new_price = ((old_price * old_qty) + trade_value) / new_qty
+
+                positions[stock]["qty"] = new_qty
+                positions[stock]["avg_price"] = new_price
+            else:
+                positions[stock] = {"qty": qty, "avg_price": price}
+
+            st.success("BUY executed")
+
+    elif action == "SELL":
+
+        if stock not in positions:
+            st.error("No position to sell")
+        else:
+            p = positions[stock]
+
+            sell_qty = min(qty, p["qty"])
+            pnl = (price - p["avg_price"]) * sell_qty
+
+            # Add capital back
+            st.session_state.capital += sell_qty * price
+
+            p["qty"] -= sell_qty
+
+            if p["qty"] == 0:
+                del positions[stock]
+
+            st.success(f"SELL executed | PnL: ₹{pnl}")
+
     st.session_state.last_trade_time[stock] = time.time()
 
-    # Log
     st.session_state.history.append({
         "stock": stock,
         "action": action,
         "price": price,
         "qty": qty
     })
-
-    st.success("Trade executed")
 
 # ---------------- PORTFOLIO ----------------
 st.subheader("Portfolio")
@@ -154,39 +179,21 @@ for s, p in positions.items():
     })
 
 df = pd.DataFrame(rows)
+
 if not df.empty:
     st.dataframe(df)
 
-# ---------------- CLOSE ----------------
-st.subheader("Close Positions")
-
-for s in list(positions.keys()):
-    if st.button(f"Close {s}"):
-
-        p = positions[s]
-        pnl = (current_price - p["avg_price"]) * p["qty"]
-
-        st.session_state.capital += pnl
-
-        st.session_state.history.append({
-            "stock": s,
-            "action": "SELL",
-            "price": current_price,
-            "qty": p["qty"],
-            "pnl": pnl
-        })
-
-        del positions[s]
-
-        st.success(f"Closed {s} | PnL: ₹{pnl}")
-
 # ---------------- SUMMARY ----------------
 st.subheader("Summary")
+
+total_exposure = sum(p["avg_price"] * p["qty"] for p in positions.values())
+
 st.write(f"Capital: ₹{st.session_state.capital}")
 st.write(f"Exposure: ₹{total_exposure}")
-st.write(f"Available: ₹{available_capital}")
+st.write(f"Total Equity: ₹{st.session_state.capital + total_exposure}")
 
 # ---------------- HISTORY ----------------
 st.subheader("Trade History")
+
 if st.session_state.history:
     st.dataframe(pd.DataFrame(st.session_state.history))
