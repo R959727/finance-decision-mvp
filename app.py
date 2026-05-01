@@ -81,12 +81,109 @@ if qty <= 0:
 # -----------------------------
 # DECISION ENGINE (ONLY IF VALID)
 # -----------------------------
+# -----------------------------
+# SMART DECISION ENGINE v1.6
+# -----------------------------
 if not invalid_input:
 
-    score = 70
+    score = 60
     reasons = []
 
     trade_value = price * qty
+
+    # -----------------------------
+    # MARKET CONTEXT
+    # -----------------------------
+    if market == "HIGH":
+        if action == "BUY":
+            score -= 15
+            reasons.append("Buying in high volatility")
+        else:
+            score += 10  # selling into volatility is good
+
+    if market == "LOW":
+        if action == "BUY":
+            score += 10
+        else:
+            score -= 10
+            reasons.append("Selling in low momentum")
+
+    # -----------------------------
+    # TRADE SIZE CONTROL
+    # -----------------------------
+    if trade_value > current_capital * 0.2:
+        score -= 20
+        reasons.append("Position too large")
+
+    if trade_value > available_capital:
+        score -= 40
+        reasons.append("Insufficient capital")
+
+    # -----------------------------
+    # STOCK-SPECIFIC BEHAVIOR
+    # -----------------------------
+    current_stock_exp = 0
+    if not stock_exposure.empty and stock in stock_exposure["stock"].values:
+        current_stock_exp = stock_exposure[
+            stock_exposure["stock"] == stock
+        ]["exposure"].values[0]
+
+    if current_stock_exp > current_capital * 0.3:
+        score -= 15
+        reasons.append("Overexposed stock")
+
+    # -----------------------------
+    # PERFORMANCE MEMORY (VERY IMPORTANT)
+    # -----------------------------
+    stock_trades = df[df["stock"] == stock]
+
+    if not stock_trades.empty:
+        pnl_sum = stock_trades["pnl"].fillna(0).sum()
+
+        if pnl_sum > 0:
+            score += 10  # you're good at this stock
+        else:
+            score -= 10
+            reasons.append("Weak performance in this stock")
+
+    # -----------------------------
+    # LOSS STREAK DETECTION
+    # -----------------------------
+    last_3 = df.tail(3)["pnl"].fillna(0)
+
+    if (last_3 < 0).sum() >= 2:
+        score -= 20
+        reasons.append("Losing streak")
+
+    # -----------------------------
+    # FINAL SCORE NORMALIZATION
+    # -----------------------------
+    score = max(0, min(score, 100))
+
+    confidence = int(score * 0.8)  # more realistic scaling
+
+    # -----------------------------
+    # RECOMMENDATION
+    # -----------------------------
+    if score >= 70:
+        rec = "STRONG TRADE"
+    elif score >= 50:
+        rec = "CAUTION"
+    else:
+        rec = "AVOID"
+
+    # -----------------------------
+    # DISPLAY
+    # -----------------------------
+    st.subheader("Pre-Trade Analysis")
+    st.write(f"Score: {score}/100")
+    st.write(f"Confidence: {confidence}%")
+    st.write(f"Recommendation: {rec}")
+
+    if reasons:
+        st.warning(", ".join(reasons))
+    else:
+        st.success("High quality setup")
 
     # volatility
     if market == "HIGH":
