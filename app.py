@@ -9,17 +9,14 @@ st.title("Financial Decision MVP")
 # -----------------------------
 capital = st.number_input("Enter Your Capital (₹)", min_value=100.0, value=10000.0)
 
-# -----------------------------
-# FILE SETUP (robust)
-# -----------------------------
 FILE = "trades.csv"
-
 required_cols = ["stock","action","price","qty","market","pnl","open"]
 
+# -----------------------------
+# LOAD DATA
+# -----------------------------
 if os.path.exists(FILE):
     df = pd.read_csv(FILE)
-
-    # ensure schema consistency
     for col in required_cols:
         if col not in df.columns:
             df[col] = None
@@ -45,11 +42,10 @@ if st.button("Reset Data"):
     st.stop()
 
 # -----------------------------
-# PORTFOLIO CALCULATION (SAFE)
+# PORTFOLIO CALCULATION
 # -----------------------------
 open_positions = df[df["open"] == True]
 
-# exposure
 if not open_positions.empty:
     open_positions["value"] = open_positions["price"] * open_positions["qty"]
     total_exposure = open_positions["value"].sum()
@@ -60,10 +56,66 @@ else:
     total_exposure = 0
     stock_exposure = pd.DataFrame(columns=["stock","exposure"])
 
-# capital
 total_pnl = df["pnl"].fillna(0).sum()
 current_capital = capital + total_pnl
 available_capital = current_capital - total_exposure
+
+# -----------------------------
+# 🧠 DECISION ENGINE (NEW)
+# -----------------------------
+score = 70  # base score
+reasons = []
+
+# Market condition
+if market == "HIGH":
+    score -= 20
+    reasons.append("High volatility")
+
+# Capital usage
+trade_value = price * qty
+if trade_value > current_capital * 0.2:
+    score -= 15
+    reasons.append("Large position size")
+
+# Concentration
+current_stock_exp = 0
+if not stock_exposure.empty and stock in stock_exposure["stock"].values:
+    current_stock_exp = stock_exposure[
+        stock_exposure["stock"] == stock
+    ]["exposure"].values[0]
+
+if current_stock_exp > current_capital * 0.3:
+    score -= 20
+    reasons.append("Overexposed in this stock")
+
+# Losing streak
+if len(df) >= 3:
+    if df.tail(3)["pnl"].fillna(0).sum() < 0:
+        score -= 15
+        reasons.append("Recent losses")
+
+score = max(0, min(score, 100))
+
+# Recommendation
+if score >= 70:
+    recommendation = "TAKE TRADE"
+elif score >= 50:
+    recommendation = "CAUTION"
+else:
+    recommendation = "AVOID"
+
+# -----------------------------
+# SHOW PRE-TRADE DECISION
+# -----------------------------
+st.subheader("Pre-Trade Analysis")
+
+st.write(f"Score: {score}/100")
+st.write(f"Recommendation: {recommendation}")
+
+if reasons:
+    st.warning(", ".join(reasons))
+else:
+    st.success("Good conditions")
 
 # -----------------------------
 # SUBMIT LOGIC
@@ -72,7 +124,6 @@ if st.button("Submit"):
 
     pnl = 0
 
-    # -------- SELL --------
     if action == "SELL":
         open_trades = df[(df["open"] == True) & (df["stock"] == stock)]
 
@@ -85,31 +136,19 @@ if st.button("Submit"):
 
         df.loc[buy_trade.name, "open"] = False
 
-    # -------- BUY VALIDATION --------
     if action == "BUY":
-
         required_amount = price * qty
 
         if required_amount > available_capital:
             st.error("Not enough capital")
             st.stop()
 
-        # concentration risk (30%)
-        current_stock_exp = 0
-
-        if not stock_exposure.empty and stock in stock_exposure["stock"].values:
-            current_stock_exp = stock_exposure[
-                stock_exposure["stock"] == stock
-            ]["exposure"].values[0]
-
+        # concentration limit
         new_exp = current_stock_exp + required_amount
-        max_allowed = current_capital * 0.3
-
-        if new_exp > max_allowed:
-            st.error("Too much exposure in this stock (limit 30%)")
+        if new_exp > current_capital * 0.3:
+            st.error("Too much exposure in this stock")
             st.stop()
 
-    # -------- SAVE --------
     new_trade = {
         "stock": stock,
         "action": action,
@@ -123,53 +162,7 @@ if st.button("Submit"):
     df = pd.concat([df, pd.DataFrame([new_trade])], ignore_index=True)
     df.to_csv(FILE, index=False)
 
-    # -------- BEHAVIOR --------
-    warning = None
-
-    if len(df) >= 3:
-        last = df.tail(3)
-
-        if (last["action"] == "BUY").sum() >= 3:
-            warning = "Over-buying behavior"
-
-        if last["pnl"].fillna(0).sum() < 0:
-            warning = "Losing streak detected"
-
-    # -------- RISK ENGINE --------
-    position_size_pct = 10
-
-    if market == "HIGH":
-        position_size_pct = 5
-
-    if warning:
-        position_size_pct = 1
-
-    position_amount = current_capital * (position_size_pct / 100)
-
-    # -------- CONFIDENCE --------
-    confidence = 70
-
-    if market == "HIGH":
-        confidence -= 15
-
-    if warning:
-        confidence -= 30
-
-    confidence = max(10, min(confidence, 95))
-
-    # -------- OUTPUT --------
-    st.subheader("Decision Output")
-    st.write(f"STOCK: {stock}")
-    st.write(f"ACTION: {action}")
-    st.write(f"POSITION SIZE: {position_size_pct}% (₹{round(position_amount,2)})")
-    st.write(f"CURRENT CAPITAL: ₹{round(current_capital,2)}")
-    st.write(f"AVAILABLE CAPITAL: ₹{round(available_capital,2)}")
-    st.write(f"CONFIDENCE: {confidence}%")
-
-    if warning:
-        st.warning(warning)
-    else:
-        st.success("No risk detected")
+    st.success("Trade executed")
 
 # -----------------------------
 # PORTFOLIO VIEW
@@ -184,8 +177,5 @@ st.dataframe(stock_exposure)
 st.subheader("Open Positions")
 st.dataframe(open_positions)
 
-# -----------------------------
-# TRADE HISTORY
-# -----------------------------
 st.subheader("Trade History")
 st.dataframe(df)
