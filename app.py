@@ -13,7 +13,7 @@ FILE = "trades.csv"
 required_cols = ["stock","action","price","qty","market","pnl","open"]
 
 # -----------------------------
-# LOAD DATA (ROBUST)
+# LOAD DATA
 # -----------------------------
 if os.path.exists(FILE):
     df = pd.read_csv(FILE)
@@ -62,7 +62,7 @@ current_capital = capital + total_pnl
 available_capital = current_capital - total_exposure
 
 # -----------------------------
-# 🧠 DECISION ENGINE
+# DECISION ENGINE
 # -----------------------------
 score = 70
 reasons = []
@@ -114,9 +114,9 @@ else:
     st.success("Good conditions")
 
 # -----------------------------
-# EXECUTION FUNCTION (VALIDATED)
+# EXECUTION FUNCTION
 # -----------------------------
-def execute_trade():
+def execute_trade(exec_qty):
     global df
 
     # -------- INPUT VALIDATION --------
@@ -128,7 +128,7 @@ def execute_trade():
         st.error("Price must be greater than 0")
         return
 
-    if qty <= 0:
+    if exec_qty <= 0:
         st.error("Quantity must be at least 1")
         return
 
@@ -143,12 +143,12 @@ def execute_trade():
             return
 
         buy_trade = open_trades.iloc[-1]
-        pnl = (price - buy_trade["price"]) * qty
+        pnl = (price - buy_trade["price"]) * exec_qty
         df.loc[buy_trade.name, "open"] = False
 
     # -------- BUY --------
     if action == "BUY":
-        required_amount = price * qty
+        required_amount = price * exec_qty
 
         if required_amount > available_capital:
             st.error("Not enough capital")
@@ -164,7 +164,7 @@ def execute_trade():
         "stock": stock.strip(),
         "action": action,
         "price": price,
-        "qty": qty,
+        "qty": exec_qty,
         "market": market,
         "pnl": pnl,
         "open": True if action == "BUY" else False
@@ -176,21 +176,27 @@ def execute_trade():
     st.success("Trade executed")
 
 # -----------------------------
-# CONTROLLED EXECUTION
+# 🔒 STRICT EXECUTION CONTROL
 # -----------------------------
 if score >= 70:
+    st.success("High-quality trade")
+
     if st.button("Execute Trade"):
-        execute_trade()
+        execute_trade(qty)
 
 elif 50 <= score < 70:
-    st.warning("Medium-quality trade. Confirm to proceed.")
-    confirm = st.checkbox("I understand the risk")
+    st.warning("Medium-quality trade")
+    st.info("Position size reduced by 50%")
 
-    if confirm and st.button("Execute Anyway"):
-        execute_trade()
+    confirm = st.checkbox("I still want to proceed")
+
+    if confirm and st.button("Execute Limited Trade"):
+        reduced_qty = max(1, int(qty * 0.5))
+        execute_trade(reduced_qty)
 
 else:
-    st.error("Low-quality trade. Execution blocked.")
+    st.error("Trade blocked: too risky")
+    st.stop()
 
 # -----------------------------
 # PORTFOLIO VIEW
