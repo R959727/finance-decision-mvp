@@ -47,6 +47,7 @@ if st.button("Reset Data"):
 open_positions = df[df["open"] == True]
 
 if not open_positions.empty:
+    open_positions = open_positions.copy()
     open_positions["value"] = open_positions["price"] * open_positions["qty"]
     total_exposure = open_positions["value"].sum()
 
@@ -61,23 +62,21 @@ current_capital = capital + total_pnl
 available_capital = current_capital - total_exposure
 
 # -----------------------------
-# 🧠 DECISION ENGINE (NEW)
+# 🧠 DECISION ENGINE
 # -----------------------------
-score = 70  # base score
+score = 70
 reasons = []
 
-# Market condition
+trade_value = price * qty
+
 if market == "HIGH":
     score -= 20
     reasons.append("High volatility")
 
-# Capital usage
-trade_value = price * qty
 if trade_value > current_capital * 0.2:
     score -= 15
-    reasons.append("Large position size")
+    reasons.append("Large position")
 
-# Concentration
 current_stock_exp = 0
 if not stock_exposure.empty and stock in stock_exposure["stock"].values:
     current_stock_exp = stock_exposure[
@@ -86,17 +85,15 @@ if not stock_exposure.empty and stock in stock_exposure["stock"].values:
 
 if current_stock_exp > current_capital * 0.3:
     score -= 20
-    reasons.append("Overexposed in this stock")
+    reasons.append("Overexposed")
 
-# Losing streak
-if len(df) >= 3:
-    if df.tail(3)["pnl"].fillna(0).sum() < 0:
-        score -= 15
-        reasons.append("Recent losses")
+if len(df) >= 3 and df.tail(3)["pnl"].fillna(0).sum() < 0:
+    score -= 15
+    reasons.append("Recent losses")
 
 score = max(0, min(score, 100))
 
-# Recommendation
+# recommendation
 if score >= 70:
     recommendation = "TAKE TRADE"
 elif score >= 50:
@@ -105,10 +102,9 @@ else:
     recommendation = "AVOID"
 
 # -----------------------------
-# SHOW PRE-TRADE DECISION
+# DISPLAY ANALYSIS
 # -----------------------------
 st.subheader("Pre-Trade Analysis")
-
 st.write(f"Score: {score}/100")
 st.write(f"Recommendation: {recommendation}")
 
@@ -118,9 +114,10 @@ else:
     st.success("Good conditions")
 
 # -----------------------------
-# SUBMIT LOGIC
+# TRADE EXECUTION FUNCTION
 # -----------------------------
-if st.button("Submit"):
+def execute_trade():
+    global df
 
     pnl = 0
 
@@ -129,11 +126,10 @@ if st.button("Submit"):
 
         if open_trades.empty:
             st.error("No open BUY for this stock")
-            st.stop()
+            return
 
         buy_trade = open_trades.iloc[-1]
         pnl = (price - buy_trade["price"]) * qty
-
         df.loc[buy_trade.name, "open"] = False
 
     if action == "BUY":
@@ -141,13 +137,12 @@ if st.button("Submit"):
 
         if required_amount > available_capital:
             st.error("Not enough capital")
-            st.stop()
+            return
 
-        # concentration limit
         new_exp = current_stock_exp + required_amount
         if new_exp > current_capital * 0.3:
             st.error("Too much exposure in this stock")
-            st.stop()
+            return
 
     new_trade = {
         "stock": stock,
@@ -163,6 +158,23 @@ if st.button("Submit"):
     df.to_csv(FILE, index=False)
 
     st.success("Trade executed")
+
+# -----------------------------
+# CONTROLLED EXECUTION
+# -----------------------------
+if score >= 70:
+    if st.button("Execute Trade"):
+        execute_trade()
+
+elif 50 <= score < 70:
+    st.warning("Medium-quality trade. Confirm to proceed.")
+    confirm = st.checkbox("I understand the risk")
+
+    if confirm and st.button("Execute Anyway"):
+        execute_trade()
+
+else:
+    st.error("Low-quality trade. Execution blocked.")
 
 # -----------------------------
 # PORTFOLIO VIEW
