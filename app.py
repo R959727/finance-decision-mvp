@@ -4,17 +4,12 @@ import os
 
 st.title("Financial Decision MVP")
 
-# -----------------------------
-# USER CAPITAL INPUT
-# -----------------------------
 capital = st.number_input("Enter Your Capital (₹)", min_value=100.0, value=10000.0)
 
 FILE = "trades.csv"
 required_cols = ["stock","action","price","qty","market","pnl","open"]
 
-# -----------------------------
-# LOAD DATA
-# -----------------------------
+# LOAD
 if os.path.exists(FILE):
     df = pd.read_csv(FILE)
     for col in required_cols:
@@ -23,26 +18,22 @@ if os.path.exists(FILE):
 else:
     df = pd.DataFrame(columns=required_cols)
 
-# -----------------------------
 # INPUT
-# -----------------------------
 stock = st.text_input("Stock Name")
 action = st.selectbox("Action", ["BUY", "SELL"])
 price = st.number_input("Price", min_value=0.0)
 qty = st.number_input("Quantity", min_value=1)
 market = st.selectbox("Market Condition", ["LOW", "HIGH"])
 
-# -----------------------------
 # RESET
-# -----------------------------
 if st.button("Reset Data"):
     if os.path.exists(FILE):
         os.remove(FILE)
-    st.success("Data reset. Refresh page.")
+    st.success("Reset done. Refresh.")
     st.stop()
 
 # -----------------------------
-# PORTFOLIO CALCULATION
+# PORTFOLIO
 # -----------------------------
 open_positions = df[df["open"] == True]
 
@@ -62,21 +53,29 @@ current_capital = capital + total_pnl
 available_capital = current_capital - total_exposure
 
 # -----------------------------
-# DECISION ENGINE
+# 🧠 STRONG DECISION ENGINE
 # -----------------------------
 score = 70
 reasons = []
 
 trade_value = price * qty
 
+# volatility
 if market == "HIGH":
-    score -= 20
+    score -= 25
     reasons.append("High volatility")
 
+# size risk
 if trade_value > current_capital * 0.2:
-    score -= 15
-    reasons.append("Large position")
+    score -= 20
+    reasons.append("Too large position")
 
+# capital stress
+if trade_value > available_capital:
+    score -= 30
+    reasons.append("Not enough capital")
+
+# concentration
 current_stock_exp = 0
 if not stock_exposure.empty and stock in stock_exposure["stock"].values:
     current_stock_exp = stock_exposure[
@@ -85,81 +84,74 @@ if not stock_exposure.empty and stock in stock_exposure["stock"].values:
 
 if current_stock_exp > current_capital * 0.3:
     score -= 20
-    reasons.append("Overexposed")
+    reasons.append("Overexposed stock")
 
-if len(df) >= 3 and df.tail(3)["pnl"].fillna(0).sum() < 0:
-    score -= 15
+# losing streak
+recent_losses = df.tail(3)["pnl"].fillna(0).sum()
+if recent_losses < 0:
+    score -= 20
     reasons.append("Recent losses")
 
 score = max(0, min(score, 100))
 
 # recommendation
 if score >= 70:
-    recommendation = "TAKE TRADE"
+    rec = "TAKE TRADE"
 elif score >= 50:
-    recommendation = "CAUTION"
+    rec = "CAUTION"
 else:
-    recommendation = "AVOID"
+    rec = "AVOID"
 
-# -----------------------------
-# DISPLAY ANALYSIS
-# -----------------------------
+# DISPLAY
 st.subheader("Pre-Trade Analysis")
 st.write(f"Score: {score}/100")
-st.write(f"Recommendation: {recommendation}")
+st.write(f"Recommendation: {rec}")
 
 if reasons:
     st.warning(", ".join(reasons))
 else:
-    st.success("Good conditions")
+    st.success("Strong setup")
 
 # -----------------------------
-# EXECUTION FUNCTION
+# EXECUTION (HARD SAFE)
 # -----------------------------
 def execute_trade(exec_qty):
-    global df
 
-    # -------- INPUT VALIDATION --------
+    # HARD STOP (no silent execution)
     if not stock or stock.strip() == "":
-        st.error("Stock name cannot be empty")
+        st.error("Stock required")
         return
 
     if price <= 0:
-        st.error("Price must be greater than 0")
+        st.error("Price must be > 0")
         return
 
     if exec_qty <= 0:
-        st.error("Quantity must be at least 1")
+        st.error("Qty must be >= 1")
         return
+
+    global df
 
     pnl = 0
 
-    # -------- SELL --------
     if action == "SELL":
         open_trades = df[(df["open"] == True) & (df["stock"] == stock)]
 
         if open_trades.empty:
-            st.error("No open BUY for this stock")
+            st.error("No BUY to sell")
             return
 
         buy_trade = open_trades.iloc[-1]
         pnl = (price - buy_trade["price"]) * exec_qty
         df.loc[buy_trade.name, "open"] = False
 
-    # -------- BUY --------
     if action == "BUY":
-        required_amount = price * exec_qty
+        required = price * exec_qty
 
-        if required_amount > available_capital:
+        if required > available_capital:
             st.error("Not enough capital")
             return
 
-        new_exp = current_stock_exp + required_amount
-        if new_exp > current_capital * 0.3:
-            st.error("Too much exposure in this stock")
-            return
-
-    # -------- SAVE --------
     new_trade = {
         "stock": stock.strip(),
         "action": action,
@@ -176,36 +168,33 @@ def execute_trade(exec_qty):
     st.success("Trade executed")
 
 # -----------------------------
-# 🔒 STRICT EXECUTION CONTROL
+# 🔒 STRICT CONTROL
 # -----------------------------
 if score >= 70:
-    st.success("High-quality trade")
-
     if st.button("Execute Trade"):
         execute_trade(qty)
 
 elif 50 <= score < 70:
-    st.warning("Medium-quality trade")
-    st.info("Position size reduced by 50%")
+    st.warning("Medium risk → size reduced")
 
-    confirm = st.checkbox("I still want to proceed")
+    confirm = st.checkbox("Proceed anyway")
 
     if confirm and st.button("Execute Limited Trade"):
         reduced_qty = max(1, int(qty * 0.5))
         execute_trade(reduced_qty)
 
 else:
-    st.error("Trade blocked: too risky")
+    st.error("Blocked: bad trade")
     st.stop()
 
 # -----------------------------
-# PORTFOLIO VIEW
+# VIEW
 # -----------------------------
 st.subheader("Portfolio Overview")
 st.write(f"Total Exposure: ₹{round(total_exposure,2)}")
 st.write(f"Available Capital: ₹{round(available_capital,2)}")
 
-st.subheader("Stock-wise Exposure")
+st.subheader("Stock Exposure")
 st.dataframe(stock_exposure)
 
 st.subheader("Open Positions")
