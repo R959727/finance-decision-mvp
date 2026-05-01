@@ -38,6 +38,15 @@ if st.button("Reset Data"):
     st.stop()
 
 # -----------------------------
+# PORTFOLIO CALCULATION
+# -----------------------------
+open_positions = df[df["open"] == True]
+total_exposure = (open_positions["price"] * open_positions["qty"]).sum()
+total_pnl = df["pnl"].sum()
+current_capital = capital + total_pnl
+available_capital = current_capital - total_exposure
+
+# -----------------------------
 # Submit logic
 # -----------------------------
 if st.button("Submit"):
@@ -56,6 +65,13 @@ if st.button("Submit"):
         pnl = (price - buy_trade["price"]) * qty
 
         df.loc[buy_trade.name, "open"] = False
+
+    # -------- Prevent over-exposure --------
+    if action == "BUY":
+        required_amount = price * qty
+        if required_amount > available_capital:
+            st.error("Not enough capital available")
+            st.stop()
 
     # -------- Create Trade --------
     new_trade = {
@@ -80,8 +96,7 @@ if st.button("Submit"):
         if (last_trades["action"] == "BUY").sum() >= 3 and (last_trades["market"] == "HIGH").sum() >= 2:
             warning = "You are repeatedly buying in high-risk conditions"
 
-    if len(df) >= 3:
-        if df.tail(3)["pnl"].sum() < 0:
+        if last_trades["pnl"].sum() < 0:
             warning = "You are in a losing streak — reduce risk"
 
     # -------- EMOTIONAL DETECTION --------
@@ -105,11 +120,7 @@ if st.button("Submit"):
     if warning:
         position_size_pct = 1
 
-    # -------- CAPITAL CALCULATION --------
-    position_amount = capital * (position_size_pct / 100)
-
-    total_pnl = df["pnl"].sum()
-    current_capital = capital + total_pnl
+    position_amount = current_capital * (position_size_pct / 100)
 
     # -------- CONFIDENCE SYSTEM --------
     confidence = 70
@@ -120,9 +131,8 @@ if st.button("Submit"):
     if warning:
         confidence -= 30
 
-    if len(df) >= 3:
-        if df.tail(3)["pnl"].sum() < 0:
-            confidence -= 20
+    if len(df) >= 3 and df.tail(3)["pnl"].sum() < 0:
+        confidence -= 20
 
     confidence = max(10, min(confidence, 95))
 
@@ -131,12 +141,24 @@ if st.button("Submit"):
     st.write(f"ACTION: {action}")
     st.write(f"POSITION SIZE: {position_size_pct}% (₹{round(position_amount,2)})")
     st.write(f"CURRENT CAPITAL: ₹{round(current_capital,2)}")
+    st.write(f"AVAILABLE CAPITAL: ₹{round(available_capital,2)}")
     st.write(f"CONFIDENCE: {confidence}%")
 
     if warning:
         st.warning(warning)
     else:
         st.success("No risky behavior detected")
+
+# -----------------------------
+# PORTFOLIO VIEW
+# -----------------------------
+st.subheader("Portfolio Overview")
+
+st.write(f"Total Exposure: ₹{round(total_exposure,2)}")
+st.write(f"Available Capital: ₹{round(available_capital,2)}")
+
+st.subheader("Open Positions")
+st.dataframe(open_positions)
 
 # -----------------------------
 # Trade History
