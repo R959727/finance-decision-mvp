@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
+import time
 
-st.set_page_config(page_title="Financial Decision MVP", layout="wide")
+st.set_page_config(layout="wide")
 
-st.title("Financial Decision MVP")
+st.title("Financial Decision MVP - Pro")
 
-# -----------------------------
-# SESSION STATE
-# -----------------------------
+# ---------------- STATE ----------------
 if "positions" not in st.session_state:
     st.session_state.positions = {}
 
@@ -17,115 +16,103 @@ if "history" not in st.session_state:
 if "capital" not in st.session_state:
     st.session_state.capital = 10000.0
 
-# -----------------------------
-# INPUTS
-# -----------------------------
-capital = st.number_input("Capital (₹)", value=st.session_state.capital)
+if "last_trade_time" not in st.session_state:
+    st.session_state.last_trade_time = {}
 
-stock = st.text_input("Stock", "tata")
+# ---------------- INPUT ----------------
+capital = st.number_input("Capital", value=st.session_state.capital)
+
+stock = st.text_input("Stock", "tata").lower()
 action = st.selectbox("Action", ["BUY", "SELL"])
-price = st.number_input("Entry Price", min_value=0.0, value=100.0)
+price = st.number_input("Price", min_value=0.0, value=100.0)
 qty = st.number_input("Quantity", min_value=1, value=1)
 market = st.selectbox("Market", ["LOW", "HIGH"])
+current_price = st.number_input("Current Price", min_value=0.0, value=price)
 
-# Live price (IMPORTANT)
-current_price = st.number_input("Current Market Price", min_value=0.0, value=price)
-
-# -----------------------------
-# RESET
-# -----------------------------
-if st.button("Reset"):
-    st.session_state.positions = {}
-    st.session_state.history = []
-    st.session_state.capital = 10000.0
-    st.success("Reset done")
-
-# -----------------------------
-# POSITION DATA
-# -----------------------------
 positions = st.session_state.positions
 
-total_exposure = sum(
-    p["avg_price"] * p["qty"] for p in positions.values()
-)
-
+# ---------------- CALCULATIONS ----------------
+total_exposure = sum(p["avg_price"] * p["qty"] for p in positions.values())
 available_capital = capital - total_exposure
 
-# -----------------------------
-# VALIDATION
-# -----------------------------
-invalid = False
-if price <= 0:
-    st.error("Price must be > 0")
-    invalid = True
+stock_exposure = 0
+if stock in positions:
+    stock_exposure = positions[stock]["avg_price"] * positions[stock]["qty"]
 
-# -----------------------------
-# DECISION ENGINE
-# -----------------------------
+trade_value = price * qty
+
+# ---------------- DECISION ENGINE ----------------
+score = 60
+reasons = []
+
+# Volatility penalty
+if market == "HIGH":
+    score -= 10
+    reasons.append("High volatility")
+
+# Position size check
+if trade_value > capital * 0.2:
+    score -= 20
+    reasons.append("Too large position")
+
+# Capital check
+if trade_value > available_capital:
+    score -= 40
+    reasons.append("Insufficient capital")
+
+# Stock exposure limit (30%)
+if (stock_exposure + trade_value) > capital * 0.3:
+    score -= 30
+    reasons.append("Overexposed stock")
+
+# Cooldown check (10 seconds demo)
+now = time.time()
+if stock in st.session_state.last_trade_time:
+    if now - st.session_state.last_trade_time[stock] < 10:
+        score -= 50
+        reasons.append("Cooldown active")
+
+score = max(0, min(score, 100))
+confidence = int(score * 0.8)
+
+# ---------------- RECOMMENDATION ----------------
+if score >= 70:
+    rec = "STRONG TRADE"
+elif score >= 50:
+    rec = "CAUTION"
+else:
+    rec = "BLOCKED"
+
+# ---------------- DISPLAY ----------------
+st.subheader("Pre-Trade Analysis")
+st.write(f"Score: {score}/100")
+st.write(f"Confidence: {confidence}%")
+st.write(f"Recommendation: {rec}")
+
+if reasons:
+    st.warning(", ".join(reasons))
+else:
+    st.success("Strong setup")
+
+# ---------------- EXECUTION LOGIC ----------------
 execute = False
 
-if not invalid:
+if rec == "STRONG TRADE":
+    if st.button("Execute Trade"):
+        execute = True
 
-    score = 60
-    reasons = []
-    trade_value = price * qty
+elif rec == "CAUTION":
+    st.warning("Manual override required")
+    if st.checkbox("Accept Risk") and st.button("Execute Anyway"):
+        execute = True
 
-    if market == "HIGH" and action == "BUY":
-        score -= 15
-        reasons.append("High volatility")
+else:
+    st.error("Trade blocked — system protection")
 
-    if trade_value > capital * 0.2:
-        score -= 20
-        reasons.append("Too large position")
-
-    if trade_value > available_capital:
-        score -= 40
-        reasons.append("Not enough capital")
-
-    if stock in positions:
-        if (positions[stock]["avg_price"] * positions[stock]["qty"] + trade_value) > capital * 0.3:
-            score -= 25
-            reasons.append("Overexposed stock")
-
-    score = max(0, min(score, 100))
-    confidence = int(score * 0.8)
-
-    if score >= 70:
-        rec = "STRONG TRADE"
-    elif score >= 50:
-        rec = "CAUTION"
-    else:
-        rec = "AVOID"
-
-    # -----------------------------
-    # DISPLAY
-    # -----------------------------
-    st.subheader("Pre-Trade Analysis")
-    st.write(f"Score: {score}/100")
-    st.write(f"Confidence: {confidence}%")
-    st.write(f"Recommendation: {rec}")
-
-    if reasons:
-        st.warning(", ".join(reasons))
-    else:
-        st.success("High quality setup")
-
-    if rec == "STRONG TRADE":
-        if st.button("Execute Trade"):
-            execute = True
-
-    elif rec == "CAUTION":
-        if st.checkbox("Accept Risk") and st.button("Execute Anyway"):
-            execute = True
-
-    else:
-        st.error("Blocked")
-
-# -----------------------------
-# EXECUTE TRADE
-# -----------------------------
+# ---------------- EXECUTE ----------------
 if execute:
 
+    # BUY
     if action == "BUY":
         if stock in positions:
             old_qty = positions[stock]["qty"]
@@ -137,11 +124,12 @@ if execute:
             positions[stock]["qty"] = new_qty
             positions[stock]["avg_price"] = new_price
         else:
-            positions[stock] = {
-                "qty": qty,
-                "avg_price": price
-            }
+            positions[stock] = {"qty": qty, "avg_price": price}
 
+    # Track cooldown
+    st.session_state.last_trade_time[stock] = time.time()
+
+    # Log
     st.session_state.history.append({
         "stock": stock,
         "action": action,
@@ -151,13 +139,10 @@ if execute:
 
     st.success("Trade executed")
 
-# -----------------------------
-# PORTFOLIO VIEW
-# -----------------------------
+# ---------------- PORTFOLIO ----------------
 st.subheader("Portfolio")
 
 rows = []
-
 for s, p in positions.items():
     unrealized = (current_price - p["avg_price"]) * p["qty"]
     rows.append({
@@ -168,14 +153,11 @@ for s, p in positions.items():
         "unrealized_pnl": unrealized
     })
 
-portfolio_df = pd.DataFrame(rows)
+df = pd.DataFrame(rows)
+if not df.empty:
+    st.dataframe(df)
 
-if not portfolio_df.empty:
-    st.dataframe(portfolio_df)
-
-# -----------------------------
-# CLOSE POSITIONS
-# -----------------------------
+# ---------------- CLOSE ----------------
 st.subheader("Close Positions")
 
 for s in list(positions.keys()):
@@ -198,18 +180,13 @@ for s in list(positions.keys()):
 
         st.success(f"Closed {s} | PnL: ₹{pnl}")
 
-# -----------------------------
-# SUMMARY
-# -----------------------------
+# ---------------- SUMMARY ----------------
 st.subheader("Summary")
 st.write(f"Capital: ₹{st.session_state.capital}")
 st.write(f"Exposure: ₹{total_exposure}")
 st.write(f"Available: ₹{available_capital}")
 
-# -----------------------------
-# HISTORY
-# -----------------------------
+# ---------------- HISTORY ----------------
 st.subheader("Trade History")
-
 if st.session_state.history:
     st.dataframe(pd.DataFrame(st.session_state.history))
