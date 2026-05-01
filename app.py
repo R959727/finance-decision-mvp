@@ -51,6 +51,25 @@ else:
 total_pnl = df["pnl"].fillna(0).sum()
 current_capital = capital + total_pnl
 available_capital = current_capital - total_exposure
+# -----------------------------
+# INPUT VALIDATION (BLOCK ENGINE)
+# -----------------------------
+invalid_input = False
+
+if not stock or stock.strip() == "":
+    st.error("Stock required")
+    invalid_input = True
+
+if price <= 0:
+    st.error("Price must be > 0")
+    invalid_input = True
+
+if qty <= 0:
+    st.error("Quantity must be >= 1")
+    invalid_input = True
+
+if invalid_input:
+    st.stop()
 
 # -----------------------------
 # 🧠 STRONG DECISION ENGINE
